@@ -1,4 +1,4 @@
-call unite#util#set_default('g:unite_source_ack_command', "ack-grep --nocolor --nogroup")
+call unite#util#set_default('g:unite_source_ack_command', "ack-grep --nocolor --nogroup --match")
 call unite#util#set_default('g:unite_source_ack_enable_highlight', 1)
 call unite#util#set_default('g:unite_source_ack_search_word_highlight', 'Search')
 call unite#util#set_default('g:unite_source_ack_ignore_case', 0)
@@ -20,9 +20,9 @@ function! s:unite_source.hooks.on_init(args, context) "{{{
     if targetdir == ''
         let targetdir = getcwd()
     endif
-    let search     = get(a:args, 1, '')
+    let search = get(a:args, 1, '')
     if empty(search)  | let search = input('Search: ')| endif
-    
+
     let a:context.source__directory = get(g:unite_source_ack_targetdir_shortcut, targetdir, targetdir)
     let a:context.source__search = search
 endfunction"}}}
@@ -32,7 +32,7 @@ function! s:unite_source.hooks.on_syntax(args, context) "{{{
     if g:unite_source_ack_ignore_case
         syn case ignore
     endif
-    execute "syntax match uniteSource__Ack_target '" . a:context.source__search . "' containedin=uniteSource__Ack"
+    execute "syntax match uniteSource__Ack_target '\\v" . a:context.source__search . "' containedin=uniteSource__Ack"
 endfunction"}}}
 
 function! s:unite_source.gather_candidates(args, context)
@@ -50,7 +50,7 @@ function! s:unite_source.gather_candidates(args, context)
     if g:unite_source_ack_enable_print_cmd
         call unite#print_message(cmd)
     endif
-    
+
     let lines = split(system(cmd), "\n")
     let candidates = []
     for line in lines
