@@ -4,18 +4,49 @@
 call unite#util#set_default('g:unite_source_ack_command', 'ack-grep')
 call unite#util#set_default('g:unite_source_ack_default_opts', '-H --nocolor --nogroup')
 call unite#util#set_default('g:unite_source_ack_use_regexp', 0)
+call unite#util#set_default('g:unite_source_ack_ignore_case', 0)
 call unite#util#set_default('g:unite_source_ack_enable_highlight', 1)
 call unite#util#set_default('g:unite_source_ack_search_word_highlight', 'Search')
-call unite#util#set_default('g:unite_source_ack_ignore_case', 0)
 call unite#util#set_default('g:unite_source_ack_enable_print_cmd', 0)
 call unite#util#set_default('g:unite_source_ack_targetdir_shortcut', {})
 call unite#util#set_default('g:unite_source_ack_enable_convert_targetdir_shortcut', 0)
+
+">=< Actions [[[1 ============================================================
+let s:action_ack_file = {
+            \   'description': 'ack this files',
+            \   'is_quit': 1,
+            \   'is_invalidate_cache': 1,
+            \   'is_selectable': 1,
+            \ }
+fun! s:action_ack_file.func(candidates) "                                 [[[2
+    call unite#start([
+                    \['ack', map(copy(a:candidates),
+                        \ 'substitute(v:val.action__path, "/$", "", "g")'),
+                    \]
+                    \], { 'no_quit' : 1 })
+endf
+
+let s:action_ack_directory = {
+            \   'description': 'ack this directories',
+            \   'is_quit': 1,
+            \   'is_invalidate_cache': 1,
+            \   'is_selectable': 1,
+            \ }
+fun! s:action_ack_directory.func(candidates) "                            [[[2
+    call unite#start([
+                    \['ack', map(copy(a:candidates), 'v:val.action__directory')]
+                    \], { 'no_quit' : 1 })
+endf
+if executable(g:unite_source_ack_command) && unite#util#has_vimproc()
+    call unite#custom_action('file,buffer', 'ack', s:action_ack_file)
+    call unite#custom_action('file,buffer', 'ack_directory', s:action_ack_directory)
+endif
 
 ">=< Source [[[1 =============================================================
 let s:ack_source = {
             \ "name": "ack",
             \ "filters": ['converter_relative_word', 'matcher_default', 'sorter_default' ],
-            \ "description": 'candidates from ack grep',
+            \ "description": 'candidates from ack-grep',
             \ "hooks": {},
             \ "syntax": "uniteSource__Ack",
             \ }
@@ -26,9 +57,13 @@ endf
 
 ">=< Hooks [[[1 ==============================================================
 fun! s:ack_source.hooks.on_init(args, context) "                          [[[2
-
 	" ~ target ~                                                          [[[3
-    let default_target = get(a:args, 0, '')
+    if type(get(a:args, 0, '')) == type([])
+        let default_target = join(get(a:args, 0, ''))
+    else
+        let default_target = get(a:args, 0, '')
+    endif
+
     if default_target == ''
         let default_target = 'project'
     endif
