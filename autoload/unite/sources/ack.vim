@@ -1,4 +1,9 @@
-call unite#util#set_default('g:unite_source_ack_command', "ack-grep --nocolor --nogroup --match")
+" [TODO]( <zhaocai> 2011-12-25 03:12PM ) add ack action -> make unite collection
+
+">=< Config [[[1 =============================================================
+call unite#util#set_default('g:unite_source_ack_command', 'ack-grep')
+call unite#util#set_default('g:unite_source_ack_default_opts', '-H --nocolor --nogroup')
+call unite#util#set_default('g:unite_source_ack_use_regexp', 0)
 call unite#util#set_default('g:unite_source_ack_enable_highlight', 1)
 call unite#util#set_default('g:unite_source_ack_search_word_highlight', 'Search')
 call unite#util#set_default('g:unite_source_ack_ignore_case', 0)
@@ -6,54 +11,133 @@ call unite#util#set_default('g:unite_source_ack_enable_print_cmd', 0)
 call unite#util#set_default('g:unite_source_ack_targetdir_shortcut', {})
 call unite#util#set_default('g:unite_source_ack_enable_convert_targetdir_shortcut', 0)
 
-let s:unite_source = {
+">=< Source [[[1 =============================================================
+let s:ack_source = {
             \ "name": "ack",
             \ "filters": ['converter_relative_word', 'matcher_default', 'sorter_default' ],
-            \ "description": 'ack the sources',
+            \ "description": 'candidates from ack grep',
             \ "hooks": {},
             \ "syntax": "uniteSource__Ack",
             \ }
+fun! unite#sources#ack#define() "                                         [[[2
+    return executable(g:unite_source_ack_command) && unite#util#has_vimproc() ?
+                \ s:ack_source : []
+endf
 
-function! s:unite_source.hooks.on_init(args, context) "{{{
-    execute 'highlight default link uniteSource__Ack_target ' . g:unite_source_ack_search_word_highlight
-    let targetdir  = get(a:args, 0, '')
-    if targetdir == ''
-        let targetdir = getcwd()
+">=< Hooks [[[1 ==============================================================
+fun! s:ack_source.hooks.on_init(args, context) "                          [[[2
+
+	" ~ target ~                                                          [[[3
+    let default_target = get(a:args, 0, '')
+    if default_target == ''
+        let default_target = 'project'
     endif
-    let search = get(a:args, 1, '')
-    if empty(search)  | let search = input('Search: ')| endif
+    " [TODO]( <zhaocai> 2011-12-28 10:36PM ) mru target
+    let target = input('Target: ', default_target, 'file')
 
-    let a:context.source__directory = get(g:unite_source_ack_targetdir_shortcut, targetdir, targetdir)
-    let a:context.source__search = search
-endfunction"}}}
+    if target == '' || target ==# 'buffers'
+        let target = join(map(filter(range(1, bufnr('$')), 'buflisted(v:val)'),
+          \ 'unite#util#escape_file_searching(bufname(v:val))'))
+    elseif target =~# '^\%(p\|project\)$'
+        let target = zlib#path#find_project_root()
+    elseif target == '%' || target == '#'
+        let target = unite#util#escape_file_searching(bufname(target))
+    elseif target =~# '^h\d$'
+        let [ level ] = matchlist(target,'\vh(\d)$')[1:1]
+        let target = unite#util#substitute_path_separator(
+                    \ fnamemodify(bufname('%'), ":p" . repeat(':h',level)))
+    elseif target == '**'
+        let target = '*'
+    else
+        let target = get(g:unite_source_ack_targetdir_shortcut, target, target)
+        if empty(target)
+            let target = join(map(filter(range(1, bufnr('$')), 'buflisted(v:val)'),
+                        \ 'unite#util#escape_file_searching(bufname(v:val))'))
+        endif
+    endif
+    let a:context.source__target = split(target)
 
-function! s:unite_source.hooks.on_syntax(args, context) "{{{
+	" ~ input ~                                                           [[[3
+	let a:context.source__input = get(a:args, 1, '')
+	if a:context.source__input == ''
+		let a:context.source__input = input('Pattern: ')
+	endif
+
+	" ~ extra opts ~                                                      [[[3
+	let a:context.source__extra_opts = get(a:args, 2, '')
+endf
+
+fun! s:ack_source.hooks.on_syntax(args, context) "                        [[[2
     if !g:unite_source_ack_enable_highlight | return | endif
     if g:unite_source_ack_ignore_case
         syn case ignore
     endif
-    execute "syntax match uniteSource__Ack_target '\\v" . a:context.source__search . "' containedin=uniteSource__Ack"
-endfunction"}}}
 
-function! s:unite_source.gather_candidates(args, context)
-    " call unite#print_message( string(a:args ))
-    let ack_cmd = g:unite_source_ack_command
-    if g:unite_source_ack_ignore_case
-        let ack_cmd.= " -i "
-    endif
-    let cmd=ack_cmd . " '" . a:context.source__search . "' "
+    execute "syntax match uniteSource__AckPattern '\\v"
+                \ . a:context.source__input . "' containedin=uniteSource__Ack"
 
-    if !empty(a:context.source__directory)
-        let cmd = cmd . " " . a:context.source__directory
+    execute 'highlight default link uniteSource__AckPattern '
+                \ . g:unite_source_ack_search_word_highlight
+
+endf
+
+fun! s:ack_source.hooks.on_close(args, context) "                         [[[2
+    if has_key(a:context, 'source__proc')
+        call a:context.source__proc.waitpid()
     endif
+endf
+
+">=< Gather Candidates [[[1 ==================================================
+fun! s:ack_source.gather_candidates(args, context) "                      [[[2
+    if empty(a:context.source__target)
+                \ || a:context.source__input == ''
+        let a:context.is_async = 0
+        call unite#print_message('[ack] Completed.')
+        return []
+    endif
+
+    if a:context.is_redraw
+        let a:context.is_async = 1
+    endif
+	let cmdline = printf('%s %s%s%s%s ''%s'' %s',
+				\   g:unite_source_ack_command,
+				\   g:unite_source_ack_default_opts,
+				\   g:unite_source_ack_use_regexp ? ' --match' : '',
+				\   g:unite_source_ack_ignore_case ? ' -i ' : '',
+				\   a:context.source__extra_opts,
+				\   substitute(a:context.source__input, "'", "''", 'g'),
+				\   join(a:context.source__target),
+				\)
 
     if g:unite_source_ack_enable_print_cmd
-        call unite#print_message(cmd)
+        call unite#print_message('[ack] Command-line: ' . cmdline)
     endif
+	let a:context.source__proc = vimproc#pgroup_open(cmdline,1)
 
-    let lines = split(system(cmd), "\n")
+	" Close handles.
+	call a:context.source__proc.stdin.close()
+	call a:context.source__proc.stderr.close()
+
+	return []
+
+endf
+
+fun! s:ack_source.async_gather_candidates(args, context) "                [[[2
+
+	let stdout = a:context.source__proc.stdout
+	if stdout.eof
+		" Disable async.
+		call unite#print_message('[ack] Completed.')
+		let a:context.is_async = 0
+	endif
+
+    let lines = map(stdout.read_lines(-1, 300),
+				\ 'iconv(v:val, &termencoding, &encoding)')
     let candidates = []
     for line in lines
+		if empty(line)
+			continue
+		endif
         let [fname, lineno, text ] = matchlist(line,'\v(.{-}):(\d+):(.*)$')[1:3]
         call add(candidates, {
                     \ "word": fname . ":" . lineno . ":" . text,
@@ -65,17 +149,8 @@ function! s:unite_source.gather_candidates(args, context)
                     \ } )
     endfor
     return candidates
-endfunction
+endf
 
-" let b:develop = 1
-if exists("b:develop")
-    call unite#define_source(s:unite_source)
-    unlet s:unite_source
-    finish
-endif
 
-function! unite#sources#ack#define() "{{{
-  return s:unite_source
-endfunction "}}}
-" }}}
-" vim: expandtab:ts=4:sts=4:sw=4
+">=< Modeline [[[1 ===========================================================
+" vim: set ft=vim ts=4 sw=4 tw=78 fdm=marker fmr=[[[,]]] fdl=1 :
