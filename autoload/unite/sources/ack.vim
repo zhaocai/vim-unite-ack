@@ -13,7 +13,7 @@ call unite#util#set_default('g:unite_source_ack_enable_convert_targetdir_shortcu
 
 ">=< Actions [[[1 ============================================================
 let s:action_ack_file = {
-            \   'description': 'ack this files',
+            \   'description': 'ack this!',
             \   'is_quit': 1,
             \   'is_invalidate_cache': 1,
             \   'is_selectable': 1,
@@ -27,7 +27,7 @@ fun! s:action_ack_file.func(candidates) "                                 [[[2
 endf
 
 let s:action_ack_directory = {
-            \   'description': 'ack this directories',
+            \   'description': 'ack directory!',
             \   'is_quit': 1,
             \   'is_invalidate_cache': 1,
             \   'is_selectable': 1,
@@ -65,7 +65,7 @@ fun! s:ack_source.hooks.on_init(args, context) "                          [[[2
     endif
 
     if default_target == ''
-        let default_target = 'project'
+        let default_target = zlib#path#find_project_root()
     endif
     " [TODO]( <zhaocai> 2011-12-28 10:36PM ) mru target
     let target = input('Target: ', default_target, 'file')
@@ -100,6 +100,10 @@ fun! s:ack_source.hooks.on_init(args, context) "                          [[[2
 
 	" ~ extra opts ~                                                      [[[3
 	let a:context.source__extra_opts = get(a:args, 2, '')
+	if a:context.source__extra_opts != ''
+		let a:context.source__extra_opts = ' ' . a:context.source__extra_opts
+	endif
+	let a:context.source__nr_async_update = 0
 endf
 
 fun! s:ack_source.hooks.on_syntax(args, context) "                        [[[2
@@ -113,6 +117,11 @@ fun! s:ack_source.hooks.on_syntax(args, context) "                        [[[2
 
     execute 'highlight default link uniteSource__AckPattern '
                 \ . g:unite_source_ack_search_word_highlight
+
+	syntax region uniteSource__AckLineNrBlock start="\[\d\+" end="\]" transparent containedin=uniteSource__Ack contains=uniteSource__AckLineNr
+    syntax match uniteSource__AckLineNr '\d\+' containedin=uniteSource__AckLineNrBlock
+
+    execute 'highlight default link uniteSource__AckLineNr ' . 'LineNr'
 
 endf
 
@@ -137,17 +146,14 @@ fun! s:ack_source.gather_candidates(args, context) "                      [[[2
 	let cmdline = printf('%s %s%s%s%s ''%s'' %s',
 				\   g:unite_source_ack_command,
 				\   g:unite_source_ack_default_opts,
-				\   g:unite_source_ack_use_regexp ? ' --match' : '',
 				\   g:unite_source_ack_ignore_case ? ' -i ' : '',
 				\   a:context.source__extra_opts,
+				\   g:unite_source_ack_use_regexp ? ' --match' : '',
 				\   substitute(a:context.source__input, "'", "''", 'g'),
 				\   join(a:context.source__target),
 				\)
-
-    if g:unite_source_ack_enable_print_cmd
-        call unite#print_message('[ack] Command-line: ' . cmdline)
-    endif
 	let a:context.source__proc = vimproc#pgroup_open(cmdline,1)
+	let a:context.source__cmdline = cmdline
 
 	" Close handles.
 	call a:context.source__proc.stdin.close()
@@ -158,24 +164,34 @@ fun! s:ack_source.gather_candidates(args, context) "                      [[[2
 endf
 
 fun! s:ack_source.async_gather_candidates(args, context) "                [[[2
+	call unite#clear_message()
+    if g:unite_source_ack_enable_print_cmd
+        call unite#print_message('[ack] Command-line: ' . a:context.source__cmdline)
+    endif
+
+	let a:context.source__nr_async_update += 1
 
 	let stdout = a:context.source__proc.stdout
 	if stdout.eof
 		" Disable async.
 		call unite#print_message('[ack] Completed.')
 		let a:context.is_async = 0
+	else
+		call unite#print_message('[ack] In Progess' . repeat('.',a:context.source__nr_async_update))
 	endif
 
-    let lines = map(stdout.read_lines(-1, 300),
+    " let lines = map(stdout.read_lines(-1, 1000),
 				\ 'iconv(v:val, &termencoding, &encoding)')
+    let lines = stdout.read_lines(-1, 1000)
     let candidates = []
     for line in lines
 		if empty(line)
 			continue
 		endif
         let [fname, lineno, text ] = matchlist(line,'\v(.{-}):(\d+):(.*)$')[1:3]
+		let word = fname . ' [' . lineno . "] " . text
         call add(candidates, {
-                    \ "word": fname . ":" . lineno . ":" . text,
+                    \ "word": word ,
                     \ "source": "ack",
                     \ "kind": "jump_list",
                     \ "action__path": fname,
